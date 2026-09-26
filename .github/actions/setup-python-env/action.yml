@@ -1,0 +1,42 @@
+name: Setup Python environment
+description: Checkout-agnostic Python setup with pip caching and dev dependencies installed.
+
+inputs:
+  python-version:
+    description: Python version to install.
+    required: false
+    default: "3.11"
+  install-dev:
+    description: Install requirements-dev.txt as well.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: |
+          requirements.txt
+          requirements-dev.txt
+
+    - name: Set up Java 17 (required by local PySpark)
+      if: inputs.install-dev == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip build
+        if [[ "${{ inputs.install-dev }}" == "true" ]]; then
+          pip install -r requirements-dev.txt
+        else
+          pip install -r rtb-c16-databricks-cicd/requirements-dev.txt
+        fi
