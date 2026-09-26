@@ -1,0 +1,72 @@
+name: AI PR Assistant
+
+# Advisory only — posts an AI review comment and an AI workflow critique on PRs.
+# It never blocks a merge; the CI workflow and SonarQube quality gate do that.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [qa, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  models: read          # required for the free GitHub Models endpoint
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    name: AI code review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          install-dev: "false"
+
+      - name: Install AI script dependencies
+        run: pip install requests==2.32.3
+
+      - name: Produce the PR diff
+        run: |
+          set -euo pipefail
+          mkdir -p ai-output
+          git diff --unified=3 \
+            "origin/${{ github.event.pull_request.base.ref }}...HEAD" \
+            -- ':(exclude)*.lock' ':(exclude)dist/**' > ai-output/pr.diff
+          wc -l ai-output/pr.diff
+
+      - name: Generate AI review
+        env:
+          # GITHUB_TOKEN drives GitHub Models; OPENAI_API_KEY takes precedence if set.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/genai/review_pr.py \
+            --diff-file ai-output/pr.diff \
+            --output ai-output/review.md
+
+      - name: Critique the workflows
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        continue-on-error: true
+        run: |
+          python scripts/genai/validate_workflows.py \
+            --workflow-dir .github/workflows \
+            --output ai-output/workflow-review.md \
+            --ai
+
+      - name: Publish to job summary
+        run: cat ai-output/review.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: ai-review
+          path: ai-output/review.md

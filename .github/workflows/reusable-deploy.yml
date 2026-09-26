@@ -1,0 +1,111 @@
+name: Reusable Databricks deploy
+
+# Single, modular deployment implementation shared by the QA and PROD pipelines.
+# Reusing it guarantees that what was proven in QA is exactly what reaches PROD.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub Environment name (qa | prod). Drives approvals and secrets.
+        required: true
+        type: string
+      bundle_target:
+        description: Databricks bundle target (qa | prod).
+        required: true
+        type: string
+      run_job:
+        description: Run the ETL job after deploying.
+        required: false
+        default: true
+        type: boolean
+      run_bootstrap:
+        description: Run the catalog/schema bootstrap job before the ETL job.
+        required: false
+        default: false
+        type: boolean
+    # Callers use `secrets: inherit`, so repository secrets *and* the secrets of
+    # the environment selected below are both available to this workflow.
+    outputs:
+      job_status:
+        description: Result of the ETL job run.
+        value: ${{ jobs.deploy.outputs.job_status }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # protection rules / approvals live here
+    outputs:
+      job_status: ${{ steps.run_job.outcome }}
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      TARGET: ${{ inputs.bundle_target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          install-dev: "false"
+
+      - uses: ./.github/actions/databricks-cli
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Validate bundle
+        run: databricks bundle validate --target "$TARGET"
+
+      - name: Deploy bundle
+        run: databricks bundle deploy --target "$TARGET"
+
+      - name: Bootstrap catalog, schemas and sample data
+        if: ${{ inputs.run_bootstrap }}
+        run: databricks bundle run retail_etl_bootstrap --target "$TARGET"
+
+      - name: Run ETL job
+        id: run_job
+        if: ${{ inputs.run_job }}
+        run: |
+          set -o pipefail
+          databricks bundle run retail_etl_job --target "$TARGET" 2>&1 | tee job-run.log
+
+      - name: Post-deployment smoke tests
+        if: ${{ inputs.run_job && success() }}
+        env:
+          DATABRICKS_WAREHOUSE_ID: ${{ secrets.DATABRICKS_WAREHOUSE_ID }}
+          TARGET_CATALOG: ${{ inputs.bundle_target }}
+        run: |
+          pip install pytest==8.3.3 databricks-sdk==0.34.0
+          pytest -m integration tests/integration -v
+
+      - name: AI deployment report
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        continue-on-error: true
+        run: |
+          pip install requests==2.32.3
+          python scripts/genai/deployment_report.py \
+            --environment "$TARGET" \
+            --status "${{ job.status }}" \
+            --commit "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --log-file job-run.log \
+            --output ai-output/deployment-report.md
+          cat ai-output/deployment-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            ai-output/deployment-report.md
+            job-run.log
+          if-no-files-found: ignore
+          retention-days: 30

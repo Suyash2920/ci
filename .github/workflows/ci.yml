@@ -1,0 +1,162 @@
+name: CI
+
+# Runs on every feature branch push and on every PR targeting qa or main.
+# Nothing is deployed here — this workflow only proves the change is safe.
+on:
+  push:
+    branches:
+      - "feature/**"
+      - "bugfix/**"
+      - "hotfix/**"
+  pull_request:
+    branches: [qa, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint & static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Ruff (style + bug patterns)
+        run: ruff check src scripts tests --output-format=github
+
+      - name: Black (formatting)
+        run: black --check src scripts tests
+
+      - name: Yamllint (bundle & workflow YAML)
+        run: yamllint -c .yamllint.yml databricks.yml resources .github/workflows
+
+      - name: Validate GitHub Actions workflows
+        run: python scripts/genai/validate_workflows.py --workflow-dir .github/workflows
+
+  security:
+    name: Security scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Bandit (SAST)
+        run: bandit -r src scripts -f screen --severity-level medium
+
+      - name: pip-audit (dependency vulnerabilities)
+        run: pip-audit -r requirements.txt --strict
+
+      - name: Gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Unit tests & coverage
+    runs-on: ubuntu-latest
+    env:
+      # Exposed as an env var so the Sonar steps can be skipped when the repo
+      # has not been onboarded to SonarQube yet.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # SonarQube needs full history for new-code detection
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Run pytest
+        run: |
+          pytest \
+            --junitxml=test-results/junit.xml \
+            --cov --cov-report=xml:coverage.xml --cov-report=term
+
+      - name: Publish test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results/junit.xml
+            coverage.xml
+          retention-days: 7
+
+      - name: SonarQube scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@v4
+
+      - name: SonarQube quality gate
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+
+  bundle-validate:
+    name: Validate Databricks bundle
+    runs-on: ubuntu-latest
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [qa, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          install-dev: "false"
+
+      - uses: ./.github/actions/databricks-cli
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: databricks bundle validate (${{ matrix.target }})
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: databricks bundle validate --target ${{ matrix.target }}
+
+  ci-summary:
+    name: CI summary
+    runs-on: ubuntu-latest
+    needs: [lint, security, test, bundle-validate]
+    if: always()
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## CI result"
+            echo ""
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| Lint & static analysis | ${{ needs.lint.result }} |"
+            echo "| Security scanning | ${{ needs.security.result }} |"
+            echo "| Unit tests & coverage | ${{ needs.test.result }} |"
+            echo "| Bundle validate | ${{ needs.bundle-validate.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any required stage failed
+        if: contains(needs.*.result, 'failure')
+        run: exit 1
