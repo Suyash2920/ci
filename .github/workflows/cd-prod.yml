@@ -1,0 +1,99 @@
+name: CD — PROD
+
+# Merges into `main` deploy to the prod Unity Catalog.
+# The `prod` GitHub Environment carries the required-reviewer protection rule,
+# so this workflow pauses for a human approval before anything is deployed.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    name: Deploy to PROD catalog
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      bundle_target: prod
+      run_job: true
+      run_bootstrap: false
+    secrets: inherit
+
+  release:
+    name: Tag release & AI release notes
+    runs-on: ubuntu-latest
+    needs: [deploy-prod]
+    if: success()
+    permissions:
+      contents: write
+      models: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          install-dev: "false"
+
+      - name: Install AI script dependencies
+        run: pip install requests==2.32.3
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag=v${version}+${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate AI release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/genai/release_notes.py \
+            --version "${{ steps.version.outputs.tag }}" \
+            --output ai-output/RELEASE_NOTES.md
+          cat ai-output/RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body_path: ai-output/RELEASE_NOTES.md
+          generate_release_notes: false
+
+  notify:
+    name: Notify Teams / Slack
+    runs-on: ubuntu-latest
+    needs: [deploy-prod, release]
+    if: always()
+    env:
+      WEBHOOK: ${{ secrets.TEAMS_WEBHOOK_URL }}
+      STATUS: ${{ needs.deploy-prod.result }}
+    steps:
+      - name: Send notification
+        if: ${{ env.WEBHOOK != '' }}
+        run: |
+          set -euo pipefail
+          payload=$(python - <<'PY'
+          import json, os
+          print(json.dumps({
+              "text": (
+                  f"PROD Databricks deployment **{os.environ['STATUS']}** "
+                  f"for {os.environ['GITHUB_REPOSITORY']}@{os.environ['GITHUB_SHA'][:8]}\n"
+                  f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+              )
+          }))
+          PY
+          )
+          curl -fsSL -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK"
