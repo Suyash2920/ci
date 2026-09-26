@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+junit/
+test-results/
+
+# Databricks
+.databricks/
+.databricks-login.json
+
+# Spark
+metastore_db/
+derby.log
+spark-warehouse/
+
+# Secrets — never commit
+*.env
+.env
+*.pem
+*.key
+secrets/
+
+# AI artifacts (generated at runtime)
+ai-output/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# SonarQube scanner
+.scannerwork/

@@ -1,0 +1,8 @@
+# Default owners for everything in the repo.
+*                       @your-github-handle
+
+# Deployment surface requires a platform reviewer.
+/.github/workflows/     @your-github-handle
+/databricks.yml         @your-github-handle
+/resources/             @your-github-handle
+/src/retail_etl/conf/   @your-github-handle

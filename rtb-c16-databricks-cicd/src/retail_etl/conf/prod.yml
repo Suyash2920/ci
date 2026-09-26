@@ -1,0 +1,14 @@
+# PROD environment — Databricks Free Edition, catalog-level isolation.
+# Deployed only from the `main` branch after a protected-environment approval.
+env: prod
+catalog: prod
+schemas:
+  bronze: bronze
+  silver: silver
+  gold: gold
+
+source_path: /Volumes/prod/landing/raw/orders/
+
+quality:
+  max_rejection_rate: 0.05
+  fail_on_violation: true

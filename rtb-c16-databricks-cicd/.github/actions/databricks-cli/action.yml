@@ -1,0 +1,30 @@
+name: Setup Databricks CLI
+description: >-
+  Installs a pinned Databricks CLI and verifies authentication.
+  Credentials are read from DATABRICKS_HOST / DATABRICKS_TOKEN in the caller's
+  environment (populated from GitHub Secrets) and are never passed as inputs,
+  so they cannot be echoed into the action log.
+
+inputs:
+  version:
+    description: Databricks CLI version to install.
+    required: false
+    default: "0.235.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Databricks CLI ${{ inputs.version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v${{ inputs.version }}/install.sh | sh
+        databricks --version
+
+    - name: Verify authentication
+      shell: bash
+      run: |
+        set -euo pipefail
+        : "${DATABRICKS_HOST:?DATABRICKS_HOST secret is not set}"
+        : "${DATABRICKS_TOKEN:?DATABRICKS_TOKEN secret is not set}"
+        databricks current-user me --output json | python -c "import json,sys; print('Authenticated as', json.load(sys.stdin).get('userName'))"

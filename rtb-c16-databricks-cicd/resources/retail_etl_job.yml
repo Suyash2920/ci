@@ -1,0 +1,74 @@
+# Medallion ETL job. Serverless compute only — required on Databricks Free Edition.
+resources:
+  jobs:
+    retail_etl_job:
+      name: retail_etl_medallion
+      description: >-
+        Bronze -> Silver -> Gold retail order pipeline. Deployed by GitHub Actions;
+        the target Unity Catalog (${var.catalog}) is the only difference between QA and PROD.
+
+      tags:
+        project: rtb-c16
+        env: ${var.catalog}
+
+      # Serverless environment: the wheel built from this repo plus its runtime deps.
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - ../dist/*.whl
+
+      parameters:
+        - name: env
+          default: ${var.catalog}
+        - name: batch_id
+          default: "{{job.start_time.iso_datetime}}"
+
+      queue:
+        enabled: true
+
+      max_concurrent_runs: 1
+
+      schedule:
+        quartz_cron_expression: "0 30 2 * * ?"
+        timezone_id: UTC
+        pause_status: ${var.schedule_status}
+
+      tasks:
+        - task_key: bronze_ingest
+          environment_key: default
+          python_wheel_task:
+            package_name: retail_etl
+            entry_point: retail-etl-bronze
+            parameters:
+              - "--env"
+              - "{{job.parameters.env}}"
+              - "--batch-id"
+              - "{{job.parameters.batch_id}}"
+
+        - task_key: silver_cleanse
+          depends_on:
+            - task_key: bronze_ingest
+          environment_key: default
+          python_wheel_task:
+            package_name: retail_etl
+            entry_point: retail-etl-silver
+            parameters:
+              - "--env"
+              - "{{job.parameters.env}}"
+              - "--batch-id"
+              - "{{job.parameters.batch_id}}"
+
+        - task_key: gold_aggregate
+          depends_on:
+            - task_key: silver_cleanse
+          environment_key: default
+          python_wheel_task:
+            package_name: retail_etl
+            entry_point: retail-etl-gold
+            parameters:
+              - "--env"
+              - "{{job.parameters.env}}"
+              - "--batch-id"
+              - "{{job.parameters.batch_id}}"

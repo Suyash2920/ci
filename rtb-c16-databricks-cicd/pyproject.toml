@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retail-etl"
+version = "1.0.0"
+description = "Databricks Lakehouse ETL (bronze/silver/gold) deployed via GitHub Actions CI/CD"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+retail-etl-bronze = "retail_etl.pipeline:bronze_main"
+retail-etl-silver = "retail_etl.pipeline:silver_main"
+retail-etl-gold = "retail_etl.pipeline:gold_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+retail_etl = ["conf/*.yml"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src", "scripts/genai"]
+addopts = "-ra --strict-markers -m 'not integration'"
+markers = [
+    "integration: tests that require a live Databricks workspace",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "C4", "SIM"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.black]
+line-length = 110
+target-version = ["py310"]

@@ -1,0 +1,15 @@
+# QA environment — Databricks Free Edition, catalog-level isolation.
+# Deployed automatically on every merge into the `qa` branch.
+env: qa
+catalog: qa
+schemas:
+  bronze: bronze
+  silver: silver
+  gold: gold
+
+# UC Volume holding the raw feed. Seeded by scripts/seed_sample_data.py.
+source_path: /Volumes/qa/landing/raw/orders/
+
+quality:
+  max_rejection_rate: 0.20
+  fail_on_violation: false

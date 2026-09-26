@@ -1,0 +1,17 @@
+# One-time (idempotent) environment bootstrap: catalog, schemas, landing volume
+# and a small sample feed so the pipeline is runnable end-to-end.
+resources:
+  jobs:
+    retail_etl_bootstrap:
+      name: retail_etl_bootstrap
+      description: Creates the Unity Catalog objects and seeds sample data for ${var.catalog}.
+      tags:
+        project: rtb-c16
+        env: ${var.catalog}
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: bootstrap
+          notebook_task:
+            notebook_path: ../notebooks/bootstrap_environment.py
+            base_parameters:
+              catalog: ${var.catalog}

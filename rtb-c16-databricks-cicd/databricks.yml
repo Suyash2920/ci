@@ -1,0 +1,55 @@
+# Databricks Asset Bundle — single Free Edition workspace, two logical
+# environments isolated by Unity Catalog (`qa` and `prod`).
+#
+# Free Edition constraints honoured here:
+#   * serverless compute only (no `new_cluster` / `existing_cluster_id`)
+#   * libraries installed through the serverless `environments` block
+#   * one workspace host shared by both targets
+bundle:
+  name: retail_etl
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog that isolates this environment.
+    default: qa
+  schedule_status:
+    description: PAUSED or UNPAUSED for the daily schedule.
+    default: PAUSED
+
+artifacts:
+  retail_etl_wheel:
+    type: whl
+    build: python -m build --wheel
+    path: .
+
+# `workspace.host` is intentionally omitted: the CLI resolves it from the
+# DATABRICKS_HOST / DATABRICKS_TOKEN environment variables injected from
+# GitHub Secrets, so no workspace URL is ever committed.
+targets:
+  qa:
+    default: true
+    presets:
+      name_prefix: "qa_"
+      tags:
+        env: qa
+        managed_by: github-actions
+    variables:
+      catalog: qa
+      schedule_status: PAUSED
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/qa
+
+  prod:
+    presets:
+      name_prefix: "prod_"
+      tags:
+        env: prod
+        managed_by: github-actions
+    variables:
+      catalog: prod
+      schedule_status: UNPAUSED
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/prod

@@ -1,0 +1,3 @@
+# Runtime dependencies for the ETL package.
+# NOTE: pyspark / delta are provided by the Databricks Runtime and are NOT installed on the cluster.
+pyyaml==6.0.2
