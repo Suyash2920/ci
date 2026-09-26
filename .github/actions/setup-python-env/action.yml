@@ -38,5 +38,5 @@ runs:
         if [[ "${{ inputs.install-dev }}" == "true" ]]; then
           pip install -r requirements-dev.txt
         else
-          pip install -r requirements.txt
+          pip install -r rtb-c16-databricks-cicd/requirements-dev.txt
         fi
